@@ -16,11 +16,13 @@
 
 package com.netflix.spinnaker.clouddriver.docker.registry.security
 
-import com.netflix.spinnaker.clouddriver.docker.registry.api.v2.client.DockerRegistryClient
+import com.netflix.spinnaker.kork.docker.service.DockerRegistryClient
+
 
 class DockerRegistryCredentials {
   private final DockerRegistryClient client
   private List<String> repositories
+  private List<String> helmOciRepositories
   private final boolean reloadRepositories
   private final boolean trackDigests
   private final boolean inspectDigests
@@ -38,6 +40,11 @@ class DockerRegistryCredentials {
     } else {
       this.reloadRepositories = false
       this.repositories = repositories
+    }
+    if (!helmOciRepositories) {
+      this.helmOciRepositories = []
+    } else {
+      this.helmOciRepositories = helmOciRepositories
     }
     this.sortTagsByDate = sortTagsByDate
   }
@@ -71,5 +78,9 @@ class DockerRegistryCredentials {
       repositories = client.getCatalog()?.repositories
     }
     return repositories
+  }
+
+  List<String> getHelmOciRepositories() {
+    return helmOciRepositories
   }
 }

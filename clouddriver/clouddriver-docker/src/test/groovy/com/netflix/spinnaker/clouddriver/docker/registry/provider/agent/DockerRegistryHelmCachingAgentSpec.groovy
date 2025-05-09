@@ -1,21 +1,6 @@
-/*
- * Copyright 2019 Netflix, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *   http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.netflix.spinnaker.clouddriver.docker.registry.provider.agent
 
+import com.netflix.spinnaker.cats.agent.AgentDataType
 import com.netflix.spinnaker.cats.agent.CacheResult
 import com.netflix.spinnaker.clouddriver.docker.registry.DockerRegistryCloudProvider
 import com.netflix.spinnaker.clouddriver.docker.registry.security.DockerRegistryCredentials
@@ -25,27 +10,78 @@ import spock.lang.Specification
 
 import java.time.Instant
 
-class DockerRegistryImageCachingAgentTest extends Specification {
+class DockerRegistryHelmCachingAgentSpec extends Specification {
 
   def KEY_PREFIX = "dockerRegistry"
   def ACCOUNT_NAME = "test-docker"
   def REGISTRY_NAME = "test-registry"
-  def CACHE_GROUP_TAGGED_IMAGE = "taggedImage"
+  def CACHE_GROUP_TAGGED_IMAGE = "taggedHelmOciImage"
   def CACHE_GROUP_IMAGE_ID = "imageId"
 
-  DockerRegistryImageCachingAgent agent
+  DockerRegistryHelmCachingAgent agent
   def credentials = Mock(DockerRegistryCredentials)
   def provider = Mock(DockerRegistryCloudProvider)
   def client = Mock(DockerRegistryClient)
 
   def setup() {
     credentials.client >> client
-    agent = new DockerRegistryImageCachingAgent(provider, ACCOUNT_NAME, credentials, 0, 1, 1, REGISTRY_NAME)
+    agent = new DockerRegistryHelmCachingAgent(provider, ACCOUNT_NAME, credentials, 0, 1, 1, REGISTRY_NAME)
+  }
+
+
+  def "getDataTypes returns correct static types"() {
+    expect:
+    DockerRegistryHelmCachingAgent.types.every {
+      it instanceof AgentDataType
+    }
+  }
+
+  def "getRepositories returns helmOciRepositories from credentials"() {
+    given:
+    def repos = ["repoA", "repoB"]
+    def credentials = Mock(DockerRegistryCredentials) {
+      getHelmOciRepositories() >> repos
+    }
+    def agent = new DockerRegistryHelmCachingAgent(
+      Mock(DockerRegistryCloudProvider),
+      "acct",
+      credentials,
+      0,
+      1,
+      60,
+      "reg"
+    )
+
+    expect:
+    agent.getRepositories() == repos
+  }
+
+  def "overrides return expected values"() {
+    given:
+    def credentials = Mock(DockerRegistryCredentials) {
+      getHelmOciRepositories() >> ["repoA"]
+    }
+    def agent = new DockerRegistryHelmCachingAgent(
+      Mock(DockerRegistryCloudProvider),
+      "acct",
+      credentials,
+      0,
+      1,
+      60,
+      "reg"
+    )
+
+    expect:
+    agent.getAgentTypeName() == "DockerRegistryHelmCachingAgent"
+    agent.getTaggedNamespace() == "taggedHelmOciImage"
+    agent.getTaggedKey("acct", "repo", "tag") == com.netflix.spinnaker.clouddriver.docker.registry.cache.Keys.getHelmTaggedImageKey("acct", "repo", "tag")
+    agent.getImageIdKey("imageId") == com.netflix.spinnaker.clouddriver.docker.registry.cache.Keys.getHelmImageIdKey("imageId")
+    agent.getAgentInterval() == agent.interval
   }
 
   def "tags loaded from docker registry should be cached"() {
     given:
-    credentials.repositories >> ["repo-1", "repo-2"]
+    credentials.helmOciRepositories >> ["repo-1", "repo-2"]
     client.getTags("repo-1") >> new DockerRegistryTags().tap {
       name = "repo-1"
       tags = ["tag-1-1"]
@@ -84,7 +120,7 @@ class DockerRegistryImageCachingAgentTest extends Specification {
   def "cached tags should include creation date"() {
     given:
     credentials.sortTagsByDate >> true
-    credentials.repositories >> ["repo-1"]
+    credentials.helmOciRepositories >> ["repo-1"]
     client.getTags("repo-1") >> new DockerRegistryTags().tap {
       name="repo-1"
       tags=["tag-1", "tag-2"]
@@ -120,7 +156,7 @@ class DockerRegistryImageCachingAgentTest extends Specification {
   def "cached tags should include digest"() {
     given:
     credentials.trackDigests >> true
-    credentials.repositories >> ["repo-1"]
+    credentials.helmOciRepositories >> ["repo-1"]
     client.getTags("repo-1") >> new DockerRegistryTags().tap {
       name="repo-1"
       tags=["tag-1", "tag-2"]
@@ -156,7 +192,7 @@ class DockerRegistryImageCachingAgentTest extends Specification {
   def "cached tags should include label if inspectDigest is true"() {
     given:
     credentials.inspectDigests >> true
-    credentials.repositories >> ["repo-1"]
+    credentials.helmOciRepositories >> ["repo-1"]
     client.getTags("repo-1") >> new DockerRegistryTags().tap { name="repo-1"; tags=["tag-1"] }
     client.getConfigDigest("repo-1", "tag-1") >> "digest-1"
     client.getDigestContent("repo-1", "digest-1") >> ["config": ["Labels": ["commitId": "id1", "buildNumber": "1"] ]]
@@ -175,7 +211,7 @@ class DockerRegistryImageCachingAgentTest extends Specification {
 
   def "error loading tags returns empty result"() {
     given:
-    credentials.repositories >> ["repo-1"]
+    credentials.helmOciRepositories >> ["repo-1"]
     client.getTags("repo-1") >> {
       throw new IOException()
     }
@@ -191,7 +227,7 @@ class DockerRegistryImageCachingAgentTest extends Specification {
   def "error loading tag date should set to null date attribute"() {
     given:
     credentials.sortTagsByDate >> true
-    credentials.repositories >> ["repo-1"]
+    credentials.helmOciRepositories >> ["repo-1"]
     client.getTags("repo-1") >> new DockerRegistryTags().tap {
       name="repo-1"
       tags=["tag-1", "tag-2"]
@@ -229,7 +265,7 @@ class DockerRegistryImageCachingAgentTest extends Specification {
   def "error loading tag digest should not cache that tag"() {
     given:
     credentials.trackDigests >> true
-    credentials.repositories >> ["repo-1"]
+    credentials.helmOciRepositories >> ["repo-1"]
     client.getTags("repo-1") >> new DockerRegistryTags().tap {
       name="repo-1"
       tags=["tag-1", "tag-2"]
@@ -260,7 +296,7 @@ class DockerRegistryImageCachingAgentTest extends Specification {
 
   def "empty tags should not be cached"() {
     given:
-    credentials.repositories >> ["repo-1"]
+    credentials.helmOciRepositories >> ["repo-1"]
     client.getTags("repo-1") >> new DockerRegistryTags().tap {
       name="repo-1"
       tags=["tag-1", ""]

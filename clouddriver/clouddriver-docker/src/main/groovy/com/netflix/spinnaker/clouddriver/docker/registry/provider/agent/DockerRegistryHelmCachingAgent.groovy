@@ -7,13 +7,13 @@ import groovy.util.logging.Slf4j
 import static java.util.Collections.unmodifiableSet
 
 @Slf4j
-class DockerRegistryImageCachingAgent extends AbstractDockerRegistryCachingAgent {
+class DockerRegistryHelmCachingAgent extends AbstractDockerRegistryCachingAgent {
   static final Set<AgentDataType> types = unmodifiableSet([
-    AgentDataType.Authority.AUTHORITATIVE.forType(Keys.Namespace.TAGGED_IMAGE.ns),
+    AgentDataType.Authority.AUTHORITATIVE.forType(Keys.Namespace.TAGGED_HELM_OCI_IMAGE.ns),
     AgentDataType.Authority.AUTHORITATIVE.forType(Keys.Namespace.IMAGE_ID.ns)
   ] as Set)
 
-  DockerRegistryImageCachingAgent(dockerRegistryCloudProvider, accountName, credentials, index, threadCount, intervalSecs, registry) {
+  DockerRegistryHelmCachingAgent(dockerRegistryCloudProvider, accountName, credentials, index, threadCount, intervalSecs, registry) {
     super(dockerRegistryCloudProvider, accountName, credentials, index, threadCount, intervalSecs, registry)
   }
 
@@ -24,27 +24,27 @@ class DockerRegistryImageCachingAgent extends AbstractDockerRegistryCachingAgent
 
   @Override
   Collection<String> getRepositories() {
-    return credentials.repositories
+    return credentials.helmOciRepositories
   }
 
   @Override
   String getAgentTypeName() {
-    return DockerRegistryImageCachingAgent.simpleName
+    return DockerRegistryHelmCachingAgent.simpleName
   }
 
   @Override
   String getTaggedNamespace() {
-    return Keys.Namespace.TAGGED_IMAGE.ns
+    return Keys.Namespace.TAGGED_HELM_OCI_IMAGE.ns
   }
 
   @Override
   String getTaggedKey(String account, String repository, String tag) {
-    return Keys.getTaggedImageKey(account, repository, tag)
+    return Keys.getHelmTaggedImageKey(account, repository, tag)
   }
 
   @Override
   String getImageIdKey(String imageId) {
-    return Keys.getImageIdKey(imageId)
+    return Keys.getHelmImageIdKey(imageId)
   }
 
   @Override

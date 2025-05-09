@@ -17,13 +17,15 @@
 package com.netflix.spinnaker.clouddriver.docker.registry.cache
 
 class Keys {
+
   static enum Namespace {
     TAGGED_IMAGE,
     IMAGE_ID,
+    TAGGED_HELM_OCI_IMAGE,
 
     static String provider = "dockerRegistry"
 
-    final String ns
+    public final String ns
 
     private Namespace() {
       def parts = name().split('_')
@@ -34,6 +36,11 @@ class Keys {
     String toString() {
       ns
     }
+
+    String getNs() {
+      return ns
+    }
+
   }
 
   static Map<String, String> parse(String key) {
@@ -59,6 +66,12 @@ class Keys {
       case Namespace.IMAGE_ID.ns:
         result << [imageId: parts[2]]
         break
+      case Namespace.TAGGED_HELM_OCI_IMAGE.ns:
+        if (parts.length < 5) {
+          return null
+        }
+        result << [account: parts[2], repository: parts[3], tag: parts[4]]
+        break
       default:
         return null
         break
@@ -74,4 +87,13 @@ class Keys {
   static String getImageIdKey(String imageId) {
     "${Namespace.provider}:${Namespace.IMAGE_ID}:${imageId}"
   }
+
+  static String getHelmTaggedImageKey(String account, String repository, String tag) {
+    "${Namespace.provider}:${Namespace.TAGGED_HELM_OCI_IMAGE}:${account}:${repository}:${tag}"
+  }
+
+  static String getHelmImageIdKey(String imageId) {
+    "${Namespace.provider}:${Namespace.IMAGE_ID}:${imageId}"
+  }
+
 }
