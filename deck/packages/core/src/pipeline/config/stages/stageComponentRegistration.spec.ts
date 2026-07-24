@@ -9,6 +9,7 @@ import './destroyService/destroyServiceStage';
 import './disableAsg/disableAsgStage.module';
 import './disableCluster/disableClusterStage';
 import './enableAsg/enableAsgStage';
+import './evaluateArtifacts/evaluateArtifactsStage';
 import './executionWindows/executionWindowsStage';
 import './findAmi/findAmiStage';
 import './findImageFromTags/findImageFromTagsStage';
@@ -38,6 +39,7 @@ const stageKeysThatMustHaveReactConfig = [
   'disableServerGroup',
   'disableCluster',
   'enableServerGroup',
+  'evaluateArtifacts',
   'evaluateDeploymentHealth',
   'findImage',
   'findImageFromTags',

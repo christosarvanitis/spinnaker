@@ -18,6 +18,7 @@ import { DISABLE_ASG_STAGE_MODULE } from './config/stages/disableAsg/disableAsgS
 import { DISABLE_CLUSTER_STAGE } from './config/stages/disableCluster/disableClusterStage';
 import { ENABLE_ASG_STAGE } from './config/stages/enableAsg/enableAsgStage';
 import './config/stages/entityTags/applyEntityTagsStage';
+import './config/stages/evaluateArtifacts/evaluateArtifactsStage';
 import './config/stages/evaluateVariables/evaluateVariablesStage';
 import { EXECUTION_WINDOWS } from './config/stages/executionWindows/executionWindows.module';
 import './config/stages/executionWindows/executionWindowsStage';
