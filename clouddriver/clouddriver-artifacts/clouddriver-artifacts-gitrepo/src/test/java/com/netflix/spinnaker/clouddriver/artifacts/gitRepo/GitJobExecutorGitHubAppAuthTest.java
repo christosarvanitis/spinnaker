@@ -28,6 +28,7 @@ import static org.mockito.Mockito.when;
 import com.netflix.spinnaker.clouddriver.jobs.JobExecutor;
 import com.netflix.spinnaker.clouddriver.jobs.JobRequest;
 import com.netflix.spinnaker.clouddriver.jobs.JobResult;
+import com.netflix.spinnaker.kork.github.GitHubAppAuthenticationException;
 import com.netflix.spinnaker.kork.github.GitHubAppAuthenticator;
 import com.netflix.spinnaker.kork.github.GitHubAppCredentials;
 import com.netflix.spinnaker.kork.github.test.GitHubAppTestKeys;
@@ -245,9 +246,9 @@ class GitJobExecutorGitHubAppAuthTest {
   void deriveModeFailsWhenOwnerCannotBeDetermined() throws IOException {
     GitJobExecutor executor = executorFor(accountWithGitHubAppDeriveMode().build());
 
-    IllegalArgumentException exception =
+    GitHubAppAuthenticationException exception =
         assertThrows(
-            IllegalArgumentException.class,
+            GitHubAppAuthenticationException.class,
             () ->
                 executor.cloneOrPull(
                     "https://github.com/", "main", tempDir.resolve("clone"), "repo"));
@@ -284,9 +285,9 @@ class GitJobExecutorGitHubAppAuthTest {
             GitRepoArtifactProviderProperties.DEFAULT_GIT_URL_REGEX_PATTERN,
             account.getGithubApp().orElseThrow().toAuthenticator("test account"));
 
-    IllegalArgumentException exception =
+    GitHubAppAuthenticationException exception =
         assertThrows(
-            IllegalArgumentException.class,
+            GitHubAppAuthenticationException.class,
             () ->
                 executor.cloneOrPull(
                     "https://github.com/forbidden-org/repo.git",

@@ -16,6 +16,9 @@
 
 package com.netflix.spinnaker.clouddriver.controllers;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.get;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static com.netflix.spinnaker.kork.common.Header.USER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.emptyString;
@@ -30,6 +33,8 @@ import static org.springframework.test.web.servlet.setup.MockMvcBuilders.webAppC
 
 import ch.qos.logback.classic.Level;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.google.common.collect.ImmutableList;
 import com.netflix.spinnaker.clouddriver.Main;
 import com.netflix.spinnaker.clouddriver.artifacts.ArtifactCredentialsRepository;
@@ -37,7 +42,12 @@ import com.netflix.spinnaker.clouddriver.artifacts.helm.HelmArtifactCredentials;
 import com.netflix.spinnaker.credentials.CredentialsRepository;
 import com.netflix.spinnaker.filters.AuthenticatedRequestFilter;
 import com.netflix.spinnaker.kork.artifacts.model.Artifact;
+import com.netflix.spinnaker.kork.github.test.GitHubAppTestKeys;
 import com.netflix.spinnaker.kork.test.log.MemoryAppender;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
@@ -47,6 +57,8 @@ import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
 import org.springframework.test.context.web.WebAppConfiguration;
@@ -65,6 +77,56 @@ import org.springframework.web.context.WebApplicationContext;
       "artifacts.helm.enabled = true"
     })
 public class ArtifactControllerSpec {
+
+  /**
+   * Stands in for the GitHub API so the GitHub App accounts below can reproduce real failures
+   * without network access.
+   */
+  private static final WireMockServer GITHUB = startStubbedGitHub();
+
+  private static final Path GITHUB_APP_KEY = writeThrowawayGitHubAppKey();
+
+  private static WireMockServer startStubbedGitHub() {
+    WireMockServer server = new WireMockServer(WireMockConfiguration.options().dynamicPort());
+    server.start();
+    // authenticating as the app succeeds ...
+    server.stubFor(
+        get(urlPathEqualTo("/app"))
+            .willReturn(
+                aResponse()
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("{\"id\": 12345, \"name\": \"test-app\"}")));
+    // ... but the app has no installation with access to the repository, which is the failure
+    // reported as a 500 before installation errors were classified as configuration errors
+    server.stubFor(
+        get(urlPathEqualTo("/repos/some-org/some-repo/installation"))
+            .willReturn(aResponse().withStatus(404)));
+    Runtime.getRuntime().addShutdownHook(new Thread(server::stop));
+    return server;
+  }
+
+  private static Path writeThrowawayGitHubAppKey() {
+    try {
+      Path key = Files.createTempFile("gh-app-key", ".pem");
+      key.toFile().deleteOnExit();
+      return GitHubAppTestKeys.writePkcs8Pem(key);
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
+  }
+
+  @DynamicPropertySource
+  static void githubAppAccount(DynamicPropertyRegistry registry) {
+    registry.add("artifacts.github.enabled", () -> "true");
+    registry.add("artifacts.github.accounts[0].name", () -> "github-app-account");
+    registry.add("artifacts.github.accounts[0].githubApp.appId", () -> "12345");
+    registry.add(
+        "artifacts.github.accounts[0].githubApp.appPrivateKeyPath", GITHUB_APP_KEY::toString);
+    // Only the GitHub App API calls go to the stub. The artifact reference itself stays on
+    // api.github.com so that it satisfies the account's default URL restrictions - it is never
+    // fetched, because resolving the installation fails first.
+    registry.add("artifacts.github.accounts[0].githubApp.apiBaseUrl", GITHUB::baseUrl);
+  }
 
   private MockMvc mvc;
 
@@ -115,6 +177,28 @@ public class ArtifactControllerSpec {
 
     List<String> userMessages = memoryAppender.layoutSearch("[" + userValue + "]", Level.DEBUG);
     assertThat(userMessages).hasSize(1);
+  }
+
+  @Test
+  public void testFetchWithGitHubAppConfigurationErrorReturnsBadRequest() throws Exception {
+    // The app is not installed for this repository. That is a configuration problem, so it must
+    // surface as a 400 rather than a 500: clouddriver has not failed, and retrying cannot help.
+    Artifact artifact =
+        Artifact.builder()
+            .type("github/file")
+            .artifactAccount("github-app-account")
+            .reference("https://api.github.com/repos/some-org/some-repo/contents/manifest.yml")
+            .version("main")
+            .build();
+
+    MvcResult result =
+        mvc.perform(
+                put("/artifacts/fetch")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(artifact)))
+            .andReturn();
+
+    mvc.perform(asyncDispatch(result)).andDo(print()).andExpect(status().isBadRequest());
   }
 
   @Test

@@ -32,6 +32,7 @@ import com.github.tomakehurst.wiremock.client.MappingBuilder;
 import com.github.tomakehurst.wiremock.matching.RegexPattern;
 import com.netflix.spinnaker.clouddriver.artifacts.config.HttpUrlRestrictions;
 import com.netflix.spinnaker.kork.artifacts.model.Artifact;
+import com.netflix.spinnaker.kork.github.GitHubAppAuthenticationException;
 import com.netflix.spinnaker.kork.github.GitHubAppAuthenticator;
 import com.netflix.spinnaker.kork.github.GitHubAppCredentials;
 import com.netflix.spinnaker.kork.github.test.GitHubAppTestKeys;
@@ -222,6 +223,35 @@ class GithubArtifactCredentialsTest {
   }
 
   @Test
+  void gitHubAppConfigurationErrorsAreNotWrappedIntoFailedDownloadException(
+      @WiremockResolver.Wiremock WireMockServer server) throws IOException {
+    // A permanent GitHub App failure (e.g. the app is not installed for this repository) must
+    // reach the controller as-is. If it were an IOException it would be wrapped into a
+    // FailedDownloadException, which has no status mapping and yields a 500 instead of a 400.
+    GitHubAppAuthenticator authenticator = mock(GitHubAppAuthenticator.class);
+    when(authenticator.getInstallationTokenForRepo(anyString(), anyString()))
+        .thenThrow(
+            new GitHubAppAuthenticationException(
+                "GitHub App 12345 has no installation with access to 'spinnaker/testing'"));
+
+    GitHubArtifactCredentials credentials =
+        new GitHubArtifactCredentials(
+            deriveModeAccountBuilder(server.baseUrl()).build(),
+            okHttpClient,
+            objectMapper,
+            authenticator);
+
+    GitHubAppAuthenticationException exception =
+        Assertions.assertThrows(
+            GitHubAppAuthenticationException.class,
+            () -> credentials.download(artifactFor(server)));
+
+    assertThat(exception.getMessage()).contains("has no installation with access");
+    assertThat(exception.getRetryable()).isFalse();
+    assertThat(server.getAllServeEvents()).isEmpty();
+  }
+
+  @Test
   void gitHubAppDeriveModeRejectsOwnersOutsideAllowedOrganizations(
       @TempDirectory.TempDir Path tempDir, @WiremockResolver.Wiremock WireMockServer server)
       throws Exception {
@@ -242,9 +272,10 @@ class GithubArtifactCredentialsTest {
     GitHubArtifactCredentials credentials =
         new GitHubArtifactCredentials(account, okHttpClient, objectMapper);
 
-    IllegalArgumentException exception =
+    GitHubAppAuthenticationException exception =
         Assertions.assertThrows(
-            IllegalArgumentException.class, () -> credentials.download(artifactFor(server)));
+            GitHubAppAuthenticationException.class,
+            () -> credentials.download(artifactFor(server)));
 
     assertThat(exception.getMessage())
         .contains("not permitted to access repositories owned by")

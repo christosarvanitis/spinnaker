@@ -11,6 +11,10 @@ dependencies {
   // Version 1.330 adds support for Jackson 2.20+
   api "org.kohsuke:github-api:1.330"
 
+  // api rather than implementation: GitHubAppAuthenticationException extends UserException and is
+  // thrown from this module's public API, so callers need it on their compile classpath
+  api project(":kork-exceptions")
+
   // JWT for GitHub App authentication
   implementation "io.jsonwebtoken:jjwt-api:0.11.5"
   implementation "io.jsonwebtoken:jjwt-impl:0.11.5"

@@ -23,6 +23,7 @@ import com.netflix.spinnaker.clouddriver.jobs.JobExecutor;
 import com.netflix.spinnaker.clouddriver.jobs.JobRequest;
 import com.netflix.spinnaker.clouddriver.jobs.JobResult;
 import com.netflix.spinnaker.kork.annotations.VisibleForTesting;
+import com.netflix.spinnaker.kork.github.GitHubAppAuthenticationException;
 import com.netflix.spinnaker.kork.github.GitHubAppAuthenticator;
 import com.netflix.spinnaker.kork.github.GitHubAppCredentials;
 import com.netflix.spinnaker.kork.github.GitHubRepoRef;
@@ -476,7 +477,7 @@ public class GitJobExecutor {
         GitHubRepoRef.parse(repoUrl)
             .orElseThrow(
                 () ->
-                    new IllegalArgumentException(
+                    new GitHubAppAuthenticationException(
                         "Unable to determine the repository owner and name from URL "
                             + repoUrl
                             + ". Configure githubApp.appInstallationId on git/repo account '"

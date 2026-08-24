@@ -18,19 +18,23 @@ package com.netflix.spinnaker.clouddriver.artifacts.gitRepo;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.netflix.spinnaker.kork.artifacts.model.Artifact;
+import com.netflix.spinnaker.kork.github.GitHubAppAuthenticationException;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 /**
  * Unit tests for GitRepoArtifactCredentials to verify URL validation against allowedHosts list when
@@ -49,6 +53,30 @@ class GitRepoArtifactCredentialsTest {
             "mockAccount", null, null, null, null, null, null, null, null, false);
     when(mockExecutor.getAccount()).thenReturn(mockAccount);
     mockFileSystem = mock(GitRepoFileSystem.class);
+  }
+
+  @Test
+  @DisplayName("Should release the clone lock when a GitHub App configuration error is thrown")
+  void shouldReleaseCloneLockOnGitHubAppConfigurationError() throws Exception {
+    // GitHubAppAuthenticationException is unchecked so that it is not wrapped into a 500; make
+    // sure that does not leave the per-clone file system lock held.
+    String repoUrl = "https://github.com/spinnaker/clouddriver.git";
+    when(mockFileSystem.getLocalClonePath(anyString(), anyString()))
+        .thenReturn(Paths.get("/tmp/does-not-matter"));
+    when(mockFileSystem.tryTimedLock(anyString(), anyString())).thenReturn(true);
+    when(mockFileSystem.canRetainClone()).thenReturn(true);
+    Mockito.doThrow(new GitHubAppAuthenticationException("app not installed"))
+        .when(mockExecutor)
+        .cloneOrPull(anyString(), anyString(), any(), anyString());
+
+    GitRepoArtifactCredentials credentials =
+        new GitRepoArtifactCredentials(
+            mockExecutor, mockFileSystem, Collections.singletonList("github.com"));
+    Artifact artifact = Artifact.builder().reference(repoUrl).version("main").build();
+
+    assertThrows(GitHubAppAuthenticationException.class, () -> credentials.download(artifact));
+
+    Mockito.verify(mockFileSystem).unlock(repoUrl, "main");
   }
 
   @Test

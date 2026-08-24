@@ -19,6 +19,7 @@ package com.netflix.spinnaker.fiat.config;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.netflix.spinnaker.fiat.roles.github.GitHubProperties;
+import com.netflix.spinnaker.kork.github.GitHubAppAuthenticationException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -117,8 +118,13 @@ class GitHubConfigTest {
     // validateConfiguration creates the authenticator
     gitHubConfig.validateConfiguration();
 
-    // When & Then - Will fail to connect (no real GitHub API) but verifies authenticator is used
-    assertThrows(IOException.class, () -> gitHubConfig.gitHubClient());
+    // When & Then - this reaches the real api.github.com with a bogus app id, so GitHub rejects
+    // the credentials (GitHubAppAuthenticationException); with no network it fails as a plain
+    // IOException. Either satisfies what this test checks, which is that the authenticator is used.
+    Exception exception = assertThrows(Exception.class, () -> gitHubConfig.gitHubClient());
+    assertTrue(
+        exception instanceof IOException || exception instanceof GitHubAppAuthenticationException,
+        "unexpected exception type: " + exception);
   }
 
   @Test

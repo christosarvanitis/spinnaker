@@ -50,6 +50,8 @@ dependencies {
   }
 
   testImplementation "io.spinnaker.kork:kork-test"
+  testImplementation testFixtures("io.spinnaker.kork:kork-github")
+  testImplementation "com.github.tomakehurst:wiremock-jre8-standalone"
   testImplementation "org.springframework.boot:spring-boot-starter-test"
   testImplementation "org.springframework.security:spring-security-test"
   testImplementation "org.spockframework:spock-core"

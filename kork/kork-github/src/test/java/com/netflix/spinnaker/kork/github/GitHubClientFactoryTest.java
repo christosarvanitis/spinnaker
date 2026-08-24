@@ -81,8 +81,7 @@ class GitHubClientFactoryTest {
   @Test
   void shouldCreateClientWithGitHubApp() {
     // When & Then - Will fail to connect (no real GitHub API) but verifies factory works
-    assertThrows(
-        IOException.class,
+    assertFailsToAuthenticate(
         () ->
             GitHubClientFactory.createWithGitHubApp(
                 "https://api.github.com", "12345", tempPrivateKeyFile.toString(), "67890"));
@@ -109,8 +108,7 @@ class GitHubClientFactoryTest {
             "12345", tempPrivateKeyFile.toString(), "67890", "https://api.github.com");
 
     // When & Then - Will fail to connect (no real GitHub API) but verifies factory works
-    assertThrows(
-        IOException.class, () -> GitHubClientFactory.createWithAuthenticator(authenticator));
+    assertFailsToAuthenticate(() -> GitHubClientFactory.createWithAuthenticator(authenticator));
   }
 
   @Test
@@ -190,7 +188,7 @@ class GitHubClientFactoryTest {
             "https://api.github.com", "12345", tempPrivateKeyFile.toString(), "67890");
 
     // When & Then - Will fail to connect (no real GitHub API) but verifies authenticator works
-    assertThrows(IOException.class, () -> authenticator.getAuthenticatedClient());
+    assertFailsToAuthenticate(() -> authenticator.getAuthenticatedClient());
   }
 
   @Test
@@ -201,6 +199,19 @@ class GitHubClientFactoryTest {
             "https://api.github.com", "12345", tempPrivateKeyFile.toString(), "67890");
 
     // When & Then - Will fail to connect (no real GitHub API) but verifies authenticator works
-    assertThrows(IOException.class, () -> authenticator.getInstallationToken());
+    assertFailsToAuthenticate(() -> authenticator.getInstallationToken());
+  }
+
+  /**
+   * These tests point at the real api.github.com with a bogus app id. When the host is reachable
+   * GitHub rejects the credentials, which surfaces as {@link GitHubAppAuthenticationException};
+   * with no network it fails as a plain {@link IOException}. Either outcome satisfies what these
+   * tests actually check, which is that the call path is wired up.
+   */
+  private static void assertFailsToAuthenticate(org.junit.jupiter.api.function.Executable call) {
+    Exception exception = assertThrows(Exception.class, call);
+    assertTrue(
+        exception instanceof IOException || exception instanceof GitHubAppAuthenticationException,
+        "unexpected exception type: " + exception);
   }
 }

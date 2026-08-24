@@ -16,6 +16,9 @@
 
 package com.netflix.spinnaker.kork.github;
 
+import static java.net.HttpURLConnection.HTTP_FORBIDDEN;
+import static java.net.HttpURLConnection.HTTP_UNAUTHORIZED;
+
 import com.google.common.util.concurrent.Striped;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
@@ -44,6 +47,7 @@ import org.kohsuke.github.GHAppInstallationToken;
 import org.kohsuke.github.GHFileNotFoundException;
 import org.kohsuke.github.GitHub;
 import org.kohsuke.github.GitHubBuilder;
+import org.kohsuke.github.HttpException;
 
 /**
  * Handles GitHub App authentication for Spinnaker components.
@@ -227,16 +231,15 @@ public class GitHubAppAuthenticator {
    * @param owner the repository owner (organization or user)
    * @param repo the repository name
    * @return Valid installation token for the owner's installation
-   * @throws IOException if no installation has access to the repository, or the token cannot be
-   *     obtained
-   * @throws IllegalArgumentException if the owner is not permitted by the configured organization
-   *     allowlist
+   * @throws IOException if the installation or token cannot be obtained for a transient reason
+   * @throws GitHubAppAuthenticationException if no installation has access to the repository, or
+   *     the owner is not permitted by the configured organization allowlist
    */
   public String getInstallationTokenForRepo(String owner, String repo) throws IOException {
     String ownerKey = owner.toLowerCase();
     // Checked before any API call so that a rejected owner costs nothing and reveals nothing
     if (!allowedOrganizations.isEmpty() && !allowedOrganizations.contains(ownerKey)) {
-      throw new IllegalArgumentException(
+      throw new GitHubAppAuthenticationException(
           "GitHub App "
               + appId
               + " is not permitted to access repositories owned by '"
@@ -284,7 +287,9 @@ public class GitHubAppAuthenticator {
     try {
       return app.getInstallationByRepository(owner, repo);
     } catch (GHFileNotFoundException e) {
-      throw new IOException(
+      // 404 here means the app is not installed in the owner's account, or the installation was
+      // not granted access to this repository. Neither is fixed by retrying.
+      throw new GitHubAppAuthenticationException(
           "GitHub App "
               + appId
               + " has no installation with access to '"
@@ -313,6 +318,16 @@ public class GitHubAppAuthenticator {
     GHApp app = authenticateAsApp();
     try {
       return app.getInstallationById(Long.parseLong(installationId));
+    } catch (GHFileNotFoundException e) {
+      throw new GitHubAppAuthenticationException(
+          "GitHub App "
+              + appId
+              + " has no installation "
+              + installationId
+              + " on "
+              + baseUrl
+              + ". Check githubApp.appInstallationId.",
+          e);
     } catch (IOException e) {
       throw new IOException(
           "Failed to look up GitHub App installation "
@@ -334,15 +349,33 @@ public class GitHubAppAuthenticator {
     try {
       return client.getApp();
     } catch (IOException e) {
-      throw new IOException(
+      String message =
           "Failed to authenticate as GitHub App "
               + appId
               + " against "
               + baseUrl
               + " (check githubApp.appId, the private key, apiBaseUrl and this host's clock): "
-              + e.getMessage(),
-          e);
+              + e.getMessage();
+      // GitHub rejecting our credentials is a configuration problem; anything else (5xx, network,
+      // timeouts) may well succeed on a retry.
+      if (isCredentialRejection(e)) {
+        throw new GitHubAppAuthenticationException(message, e);
+      }
+      throw new IOException(message, e);
     }
+  }
+
+  /** True when GitHub rejected the app's credentials rather than failing to serve the request. */
+  private static boolean isCredentialRejection(IOException e) {
+    if (e instanceof GHFileNotFoundException) {
+      // /app returns 404 for an unknown app id
+      return true;
+    }
+    if (e instanceof HttpException) {
+      int responseCode = ((HttpException) e).getResponseCode();
+      return responseCode == HTTP_UNAUTHORIZED || responseCode == HTTP_FORBIDDEN;
+    }
+    return false;
   }
 
   private CachedToken mintToken(GHAppInstallation installation, String installationId)

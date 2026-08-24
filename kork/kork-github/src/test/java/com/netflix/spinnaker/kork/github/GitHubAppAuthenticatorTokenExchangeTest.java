@@ -217,9 +217,9 @@ class GitHubAppAuthenticatorTokenExchangeTest {
             .willReturn(aResponse().withStatus(404)));
     GitHubAppAuthenticator authenticator = deriveModeAuthenticator(server.baseUrl());
 
-    IOException exception =
+    GitHubAppAuthenticationException exception =
         assertThrows(
-            IOException.class,
+            GitHubAppAuthenticationException.class,
             () -> authenticator.getInstallationTokenForRepo("unknown-org", "unknown-repo"));
 
     assertTrue(
@@ -227,6 +227,10 @@ class GitHubAppAuthenticatorTokenExchangeTest {
             .getMessage()
             .contains("has no installation with access to 'unknown-org/unknown-repo'"),
         exception.getMessage());
+    // The declared type above is the assertion that matters: were this an IOException, clouddriver
+    // would wrap it into a 500 FailedDownloadException. javac enforces the two are disjoint.
+    assertEquals(Boolean.FALSE, exception.getRetryable());
+    assertEquals(exception.getMessage(), exception.getUserMessage());
   }
 
   @Test
@@ -235,15 +239,61 @@ class GitHubAppAuthenticatorTokenExchangeTest {
     server.stubFor(get(urlPathEqualTo("/app")).willReturn(aResponse().withStatus(401)));
     GitHubAppAuthenticator authenticator = deriveModeAuthenticator(server.baseUrl());
 
-    IOException exception =
+    GitHubAppAuthenticationException exception =
         assertThrows(
-            IOException.class,
+            GitHubAppAuthenticationException.class,
             () -> authenticator.getInstallationTokenForRepo("test-org", "my-repo"));
 
     assertTrue(
         exception.getMessage().contains("Failed to authenticate as GitHub App"),
         exception.getMessage());
     assertFalse(exception.getMessage().contains("has no installation with access"));
+  }
+
+  @Test
+  void shouldTreatTransientGitHubFailuresAsRetryableIoExceptions() {
+    // a 500 from GitHub may well succeed on a retry, so it must stay an IOException
+    server.stubFor(get(urlPathEqualTo("/app")).willReturn(aResponse().withStatus(500)));
+    GitHubAppAuthenticator authenticator = deriveModeAuthenticator(server.baseUrl());
+
+    IOException exception =
+        assertThrows(
+            IOException.class,
+            () -> authenticator.getInstallationTokenForRepo("test-org", "my-repo"));
+
+    assertNotNull(exception.getMessage());
+  }
+
+  @Test
+  void shouldTreatTransientInstallationLookupFailuresAsRetryableIoExceptions() {
+    server.stubFor(
+        get(urlPathEqualTo("/repos/test-org/my-repo/installation"))
+            .willReturn(aResponse().withStatus(503)));
+    GitHubAppAuthenticator authenticator = deriveModeAuthenticator(server.baseUrl());
+
+    IOException exception =
+        assertThrows(
+            IOException.class,
+            () -> authenticator.getInstallationTokenForRepo("test-org", "my-repo"));
+
+    assertTrue(
+        exception.getMessage().contains("Failed to resolve the GitHub App installation"),
+        exception.getMessage());
+  }
+
+  @Test
+  void shouldReportAMissingPinnedInstallationAsAConfigurationError() {
+    server.stubFor(
+        get(urlPathEqualTo("/app/installations/" + INSTALLATION_ID))
+            .willReturn(aResponse().withStatus(404)));
+    GitHubAppAuthenticator authenticator = authenticator(server.baseUrl());
+
+    GitHubAppAuthenticationException exception =
+        assertThrows(GitHubAppAuthenticationException.class, authenticator::getInstallationToken);
+
+    assertTrue(
+        exception.getMessage().contains("has no installation " + INSTALLATION_ID),
+        exception.getMessage());
   }
 
   @Test
@@ -289,9 +339,9 @@ class GitHubAppAuthenticatorTokenExchangeTest {
     stubRepoInstallation("forbidden-org", "my-repo", "99999", "ghs_org_token");
     GitHubAppAuthenticator authenticator = restrictedAuthenticator(Set.of("test-org"));
 
-    IllegalArgumentException exception =
+    GitHubAppAuthenticationException exception =
         assertThrows(
-            IllegalArgumentException.class,
+            GitHubAppAuthenticationException.class,
             () -> authenticator.getInstallationTokenForRepo("forbidden-org", "my-repo"));
 
     assertTrue(
