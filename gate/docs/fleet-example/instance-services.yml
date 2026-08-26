@@ -1,0 +1,67 @@
+# Per-instance Services. The names must match the `upstream` blocks in
+# nginx-fleet-edge.conf, and they must EXIST before the edge starts: nginx resolves upstream
+# hostnames once at boot and refuses to start if one does not resolve. Keep them around even
+# while an instance is scaled to zero.
+#
+# Each instance is a completely independent Spinnaker -- its own Gate, Deck, Redis and Fiat.
+# Deploy each one's workloads with the label spinnaker.io/fleet-instance: inst-1 (or inst-2)
+# so these selectors match.
+#
+# Selectors here are deliberately explicit. Do not add a kustomize `labels` transformer with
+# includeSelectors to this overlay: it would inject its own label into these selectors and
+# silently stop them matching the real instance pods.
+apiVersion: v1
+kind: Service
+metadata:
+  name: gate-inst-1
+spec:
+  selector:
+    app.kubernetes.io/name: gate
+    spinnaker.io/fleet-instance: inst-1
+  ports:
+  - port: 8084
+    protocol: TCP
+    targetPort: 8084
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gate-inst-2
+spec:
+  selector:
+    app.kubernetes.io/name: gate
+    spinnaker.io/fleet-instance: inst-2
+  ports:
+  - port: 8084
+    protocol: TCP
+    targetPort: 8084
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: deck-inst-1
+spec:
+  selector:
+    app.kubernetes.io/name: deck
+    spinnaker.io/fleet-instance: inst-1
+  ports:
+  - port: 9000
+    protocol: TCP
+    targetPort: 9000
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: deck-inst-2
+spec:
+  selector:
+    app.kubernetes.io/name: deck
+    spinnaker.io/fleet-instance: inst-2
+  ports:
+  - port: 9000
+    protocol: TCP
+    targetPort: 9000
+  type: ClusterIP

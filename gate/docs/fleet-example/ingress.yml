@@ -1,0 +1,59 @@
+# Deliberately dumb: terminate TLS, preserve Host, hand everything to the edge. All routing
+# is done inside the edge, because "route to a different Service depending on which session
+# cookie NAME is present" is not expressible in ingress-nginx annotations (see README.md).
+#
+# Do NOT add rewrite-target, affinity or canary annotations here.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: spinnaker-fleet
+  annotations:
+    alb.ingress.kubernetes.io/actions.ssl-redirect: '{"Type":"redirect", "RedirectConfig":{ "Protocol": "HTTPS", "Port": "443", "StatusCode": "HTTP_301"}}'
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-west-2:170033264494:certificate/c54e7daa-4607-4fbb-8cde-7561a08267cf
+    alb.ingress.kubernetes.io/group.name: fleet-ingress
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443},{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/load-balancer-attributes: routing.http2.enabled=true
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/security-groups: sg-07b0b99ee7f05a0ab,sg-02e9e4951a44929d5
+    alb.ingress.kubernetes.io/success-codes: 404,200
+    alb.ingress.kubernetes.io/tags: Name=fleet-ingress
+    kubernetes.io/ingress.class: alb
+spec:
+  rules:
+  # The global URL: what every ordinary user sees.
+  - host: spin.managed.armory.io
+    http: &edge
+      paths:
+        # NOTE the "/*" -- it is load-bearing. With pathType: ImplementationSpecific the AWS
+        # Load Balancer Controller passes the path straight through as an ALB path-pattern
+        # condition, and ALB patterns are EXACT match unless they contain a wildcard. So
+        # "path: /" creates a rule matching only the literal "/", every other URL falls
+        # through to the ALB's default action, and the fleet breaks in a very confusing way:
+        # https://host/ reaches nginx and 302s to the picker, then /_fleet/ 404s at the ALB
+        # with `server: awselb/2.0`, so no picker ever renders. /api/v1/* dies the same way.
+        #
+        # "path: / with pathType: Prefix" is the portable equivalent -- the controller
+        # translates Prefix "/" into "/*" for you. Either works; do not mix "/" with
+        # ImplementationSpecific.
+        - backend:
+            service:
+              name: ssl-redirect
+              port:
+                name: use-annotation
+          path: /*
+          pathType: ImplementationSpecific
+        - backend:
+            service:
+              name: spinnaker-fleet-edge
+              port:
+                number: 8080
+          path: /*
+          pathType: ImplementationSpecific
+  # Instance URLs. These MUST stay reachable by end-user browsers: with a per-instance SAML
+  # ACS the IdP posts the assertion to the instance host through the user's browser. That is
+  # exactly why the admin-only rule is enforced inside Gate rather than by a NetworkPolicy
+  # here -- it cannot be a firewall rule.
+  - host: inst-1.spin.managed.armory.io
+    http: *edge
+  - host: inst-2.spin.managed.armory.io
+    http: *edge

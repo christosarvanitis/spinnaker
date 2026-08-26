@@ -1,0 +1,194 @@
+# Kubernetes wiring for a 2-instance Spinnaker fleet.
+#
+# The fleet router is a small standalone NGINX Deployment rather than annotations on an
+# ingress-nginx Ingress. See README.md ("Why not do this with ingress-nginx
+# annotations?") for why -- in short, routing to a different Service based on which
+# session cookie NAME is present is not expressible in ingress-nginx annotations.
+#
+# The Ingress in front of this edge is deliberately trivial: terminate TLS, preserve
+# Host, and hand everything to the edge, which does the real routing.
+#
+# The spinnaker-fleet-edge ConfigMap is NOT defined here on purpose -- inlining the
+# nginx files would duplicate them and let the copies drift. Create it from the real
+# files first (step 1 in README.md):
+#
+#   kubectl -n spinnaker create configmap spinnaker-fleet-edge \
+#     --from-file=fleet-edge.conf=nginx-fleet-edge.conf \
+#     --from-file=fleet-proxy-headers.conf=fleet-proxy-headers.conf \
+#     --from-file=nginx.conf=nginx.conf \
+#     --dry-run=client -o yaml | kubectl apply -f -
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spinnaker-fleet-edge
+  namespace: spinnaker
+spec:
+  # Stateless: all routing state lives in the caller's cookie, so scale freely.
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: spinnaker-fleet-edge
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: spinnaker-fleet-edge
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          # Served by the default_server block in fleet-edge.conf, so it needs no Host
+          # header and does not depend on any instance being up.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101 # nginx user in the alpine image
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+              readOnly: true
+            - name: config
+              mountPath: /etc/nginx/conf.d/fleet-edge.conf
+              subPath: fleet-edge.conf
+              readOnly: true
+            - name: config
+              mountPath: /etc/nginx/fleet-proxy-headers.conf
+              subPath: fleet-proxy-headers.conf
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: spinnaker-fleet-edge
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spinnaker-fleet-edge
+  namespace: spinnaker
+spec:
+  selector:
+    app.kubernetes.io/name: spinnaker-fleet-edge
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+# Per-instance Services. Names must match the upstream blocks in nginx-fleet-edge.conf.
+# Each instance is a completely independent Spinnaker: its own Gate, Deck, Redis, Fiat.
+apiVersion: v1
+kind: Service
+metadata:
+  name: gate-inst-1
+  namespace: spinnaker
+spec:
+  selector:
+    app.kubernetes.io/name: gate
+    spinnaker.io/fleet-instance: inst-1
+  ports:
+    - port: 8084
+      targetPort: 8084
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gate-inst-2
+  namespace: spinnaker
+spec:
+  selector:
+    app.kubernetes.io/name: gate
+    spinnaker.io/fleet-instance: inst-2
+  ports:
+    - port: 8084
+      targetPort: 8084
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: deck-inst-1
+  namespace: spinnaker
+spec:
+  selector:
+    app.kubernetes.io/name: deck
+    spinnaker.io/fleet-instance: inst-1
+  ports:
+    - port: 9000
+      targetPort: 9000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: deck-inst-2
+  namespace: spinnaker
+spec:
+  selector:
+    app.kubernetes.io/name: deck
+    spinnaker.io/fleet-instance: inst-2
+  ports:
+    - port: 9000
+      targetPort: 9000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: spinnaker-fleet
+  namespace: spinnaker
+  annotations:
+    cert-manager.io/cluster-issuer: example-issuer
+    # Do NOT add rewrite-target, affinity or canary annotations here. All routing is
+    # done by the edge; ingress-nginx must pass Host and the URI through untouched.
+    nginx.ingress.kubernetes.io/proxy-body-size: 32m
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+spec:
+  ingressClassName: nginx
+  rules:
+    # The global URL: what every ordinary user sees.
+    - host: spinnaker.example.com
+      http: &edge
+        paths:
+          - backend:
+              service:
+                name: spinnaker-fleet-edge
+                port:
+                  number: 8080
+            path: /
+            pathType: Prefix
+    # Instance URLs. These MUST remain reachable by end-user browsers, because with a
+    # per-instance SAML ACS the IdP posts the assertion to the instance host through the
+    # user's browser. That is precisely why the admin-only rule is enforced inside Gate
+    # rather than by a network policy here -- it cannot be a firewall rule.
+    - host: inst-1.spinnaker.example.com
+      http: *edge
+    - host: inst-2.spinnaker.example.com
+      http: *edge
+  tls:
+    - hosts:
+        - spinnaker.example.com
+        - inst-1.spinnaker.example.com
+        - inst-2.spinnaker.example.com
+      secretName: spinnaker-fleet-tls

@@ -1,0 +1,117 @@
+# Gate configuration for fleet instance 2 of 2.
+#
+# Instance 1 is identical except for the values marked PER-INSTANCE below.
+# Everything here layers on top of gate-web/config/gate.yml. See ../fleet.md.
+
+# ---------------------------------------------------------------------------
+# Fleet identity
+# ---------------------------------------------------------------------------
+fleet:
+  enabled: true
+  # The single URL users see. Any request whose effective host is NOT this is treated
+  # as a direct-to-instance hit, and a session-authenticated non-admin reaching it is
+  # redirected here. Same value on every instance.
+  global-base-url: https://spinnaker.example.com
+  # PER-INSTANCE: inst-1 on the other instance. Logging and diagnostics only --
+  # routing is driven by the session cookie name at the edge.
+  instance-id: inst-2
+  # exempt-paths is deliberately left at its default, which is derived from the
+  # permitAll set in AuthConfig plus the SAML endpoints. Only override to add
+  # site-specific unauthenticated integrations.
+
+server:
+  # Gate owns the /api/v1 prefix itself, so the edge passes URIs straight through and
+  # no X-Forwarded-Prefix is needed. This also puts Deck and Gate on one origin, which
+  # removes CORS from the picture entirely.
+  servlet:
+    context-path: /api/v1
+    session:
+      cookie:
+        # PER-INSTANCE: SESSION_INST_1 on the other instance.
+        # This name IS the fleet's routing key -- the edge maps it to an upstream --
+        # so it must be unique per instance.
+        name: SESSION_INST_2
+        # The shared parent domain, NOT this instance's hostname. This is what lets a
+        # cookie minted during the SAML round trip (which happens on the instance
+        # hostname) still be sent when the browser returns to the global URL. Without
+        # it the fleet has no routing signal at all.
+        domain: .spinnaker.example.com
+        secure: true
+        http-only: true
+        # SameSite is intentionally unset. Our IdP is on the same registrable domain
+        # (example.com) as Spinnaker, so the IdP -> ACS POST is same-site and a Lax
+        # cookie is delivered. If you move to a hosted IdP on another domain, set
+        # same-site: none here (requires secure: true) -- gate-saml honours it.
+
+  # Must be "framework" if you rely on X-Forwarded-Prefix. With the context-path above
+  # we do not, so "native" would also work -- but framework is the safer default, and
+  # it is what makes ForwardedHeaderFilter record the GLOBAL host in the SAML saved
+  # request, which keeps the instance URL out of the post-login redirect.
+  forward-headers-strategy: framework
+
+# ---------------------------------------------------------------------------
+# Downstream services
+# ---------------------------------------------------------------------------
+# NB: one services: block only. A second top-level services: key later in the file
+# would silently replace this one and drop everything in it.
+services:
+  deck:
+    base-url: https://spinnaker.example.com
+    # Must cover the global host AND every instance host. When set, this pattern
+    # REPLACES the base-url comparison in AuthController.validDeckRedirect and in
+    # GateOriginValidator. Without the instance hosts, an admin working against an
+    # instance directly gets "400 Requested redirect address not recognized".
+    redirect-host-pattern: '^(spinnaker|inst-1\.spinnaker|inst-2\.spinnaker)\.example\.com$'
+
+  # Fiat must be enabled for the guardrail to mean anything: FiatPermissionEvaluator
+  # .isAdmin() returns true for everyone when Fiat is disabled, so the guardrail would
+  # correctly never fire and any user could sit on an instance URL.
+  fiat:
+    enabled: true
+    # PER-INSTANCE: each instance runs its own Fiat.
+    base-url: http://fiat-inst-2.spinnaker.svc.cluster.local:7003
+
+# ---------------------------------------------------------------------------
+# SAML -- one registration per instance, each with its own ACS
+# ---------------------------------------------------------------------------
+saml:
+  enabled: true
+  user-attribute-mapping:
+    email: email
+    roles: memberOf
+  # login-processing-url defaults to /saml/SSO. Whatever it is set to, it is always
+  # exempt from the fleet guardrail, so a non-admin is never bounced mid-login.
+
+spring:
+  security:
+    saml2:
+      relyingparty:
+        registration:
+          # PER-INSTANCE: the registration id appears in /saml2/authenticate/{id}.
+          inst-2:
+            # PER-INSTANCE: register this exact URL with the IdP as this SP's ACS.
+            # It includes the /api/v1 context path and uses the INSTANCE hostname --
+            # the IdP posts the assertion here through the user's browser, which is
+            # the one hop where an instance URL is visible.
+            acs:
+              location: https://inst-2.spinnaker.example.com/api/v1/saml/SSO
+            # PER-INSTANCE: most IdPs require a distinct entity id per ACS.
+            entity-id: spinnaker-inst-2
+            assertingparty:
+              metadata-uri: https://sso.example.com/app/EXAMPLE/sso/saml/metadata
+              singlesignon:
+                sign-request: true
+            signing:
+              credentials:
+                - private-key-location: /etc/gate/saml/private_key.pem
+                  certificate-location: /etc/gate/saml/certificate.pem
+
+  # Each instance MUST have its own Redis. Sessions are deliberately not shared --
+  # that is exactly what makes the cookie name a reliable routing key.
+  session:
+    store-type: redis
+  data:
+    redis:
+      # PER-INSTANCE: redis-inst-1 on the other instance.
+      host: redis-inst-2.spinnaker.svc.cluster.local
+      port: 6379

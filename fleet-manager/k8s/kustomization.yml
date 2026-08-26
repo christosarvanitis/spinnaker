@@ -1,0 +1,34 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Reusable base for running the fleet manager in Kubernetes. Applyable on its own for a
+# smoke test, but the values below are PLACEHOLDERS -- a real deployment composes this base
+# and overrides the ConfigMap. See gate/docs/fleet-example/k8s/ for a worked overlay.
+
+resources:
+- deployment.yml
+- service.yml
+
+# Follows the convention in spinnaker-kustomize/base/<service>: the workload declares no
+# labels or selector of its own, and kustomize derives both from here.
+labels:
+- includeSelectors: true
+  pairs:
+    app.kubernetes.io/name: fleet-manager
+
+configMapGenerator:
+- name: fleet-manager
+  literals:
+  # Every value here is a placeholder meant to be overridden.
+  #
+  # FLEET_INSTANCES ids MUST match the instance ids the edge router maps its session
+  # cookie names to, or the header this service returns will select no upstream.
+  - FLEET_INSTANCES=inst-1=Instance One,inst-2=Instance Two
+  - FLEET_DEFAULT_INSTANCE=inst-1
+  # The shared parent domain, so the choice cookie is visible at the global URL and at
+  # every instance hostname.
+  - FLEET_COOKIE_DOMAIN=.spin.managed.armory.io
+  # Keep this true anywhere real. Only a plain-HTTP harness needs it false, and getting it
+  # wrong the other way makes browsers silently discard the cookie, which looks like an
+  # infinite redirect to the picker.
+  - FLEET_COOKIE_SECURE=true

@@ -1,0 +1,62 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# A worked 2-instance Spinnaker fleet: the edge router, the fleet manager, per-instance
+# Services and the Ingress.
+#
+#   kubectl apply -k gate/docs/fleet-example/
+#
+# This kustomization lives beside the nginx files rather than in a k8s/ subdirectory on
+# purpose. kustomize's default load restrictor (LoadRestrictionsRootOnly) refuses
+# configMapGenerator files outside the kustomization root, so a subdirectory would force us
+# to keep duplicate copies of nginx.conf and friends -- and duplicates drift. Generating the
+# ConfigMap from the real files means the cluster runs exactly what this directory
+# documents, and what fleet-manager/e2e/run-e2e.sh tests.
+
+namespace: spinnaker
+
+resources:
+- edge-deployment.yml
+- instance-services.yml
+- ingress.yml
+# The fleet manager's own reusable base. It ships with placeholder config, overridden below.
+- ../../../fleet-manager/k8s
+
+configMapGenerator:
+# The edge's nginx config, straight from the files in this directory.
+#
+# Note the "fleet-edge.conf=nginx-fleet-edge.conf" rename: the key has to be
+# fleet-edge.conf because nginx.conf includes that exact filename rather than globbing
+# *.conf (which would pick up the nginx image's own default.conf).
+- name: fleet-edge
+  files:
+  - nginx.conf
+  - fleet-proxy-headers.conf
+  - fleet-edge.conf=nginx-fleet-edge.conf
+
+# Replace the fleet manager base's placeholder config with this fleet's real values. The
+# instance ids MUST match the ids the edge's cookie map produces, or the header the fleet
+# manager returns will select no upstream.
+- name: fleet-manager
+  behavior: merge
+  literals:
+  - FLEET_INSTANCES=inst-1=Instance One,inst-2=Instance Two
+  - FLEET_DEFAULT_INSTANCE=inst-1
+  - FLEET_COOKIE_DOMAIN=.spin.managed.armory.io
+  - FLEET_COOKIE_SECURE=true
+
+# Every object here belongs to the fleet, but this is metadata only -- includeSelectors is
+# deliberately absent, because rewriting selectors would break the per-instance Services
+# that must match the real Gate/Deck pods.
+labels:
+- includeSelectors: false
+  pairs:
+    app.kubernetes.io/part-of: spinnaker-fleet
+
+images:
+# The fleet manager is not published anywhere (it is a validation fixture, kept out of CI),
+# so point this at whatever you built. For kind:
+#   docker build -t fleet-manager:dev fleet-manager/
+#   kind load docker-image fleet-manager:dev --name spinnaker
+- name: fleet-manager
+  newTag: latest

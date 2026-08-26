@@ -1,0 +1,43 @@
+# Two containers: the real edge config, and the real fleet manager.
+#
+# The edge config is NOT copied into this directory. run-e2e.sh generates
+# .generated/edge.conf from gate/docs/fleet-example/nginx-fleet-edge.conf, changing only
+# the upstream addresses. That way the harness always exercises the documented config and
+# cannot drift away from it.
+
+services:
+  fleet-manager:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      FLEET_INSTANCES: "inst-1=Instance One (eu-west),inst-2=Instance Two (us-east)"
+      FLEET_DEFAULT_INSTANCE: inst-1
+      FLEET_COOKIE_DOMAIN: .spinnaker.example.com
+      # The harness speaks plain HTTP, so a Secure cookie would never be stored.
+      # Production sets this to true.
+      FLEET_COOKIE_SECURE: "false"
+    healthcheck:
+      # nginx resolves upstream hostnames once at startup and refuses to start if one does
+      # not resolve, so the edge must not come up before this container exists.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  edge:
+    image: nginx:1.27-alpine
+    depends_on:
+      fleet-manager:
+        condition: service_healthy
+    ports:
+      - "18080:8080"
+    volumes:
+      # Real files from the documented example, mounted unmodified.
+      - ../../gate/docs/fleet-example/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../../gate/docs/fleet-example/fleet-proxy-headers.conf:/etc/nginx/fleet-proxy-headers.conf:ro
+      # The documented edge config with upstreams repointed at the stubs, plus the stub
+      # server blocks appended. It must be named fleet-edge.conf because that is the exact
+      # filename the real nginx.conf includes -- it deliberately does not glob *.conf, so
+      # that the nginx image's own default.conf is never picked up.
+      - ./.generated/fleet-edge.conf:/etc/nginx/conf.d/fleet-edge.conf:ro
