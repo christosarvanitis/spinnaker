@@ -19,7 +19,8 @@ spec:
     app.kubernetes.io/name: gate
     spinnaker.io/fleet-instance: inst-1
   ports:
-  - port: 8084
+  - name: https
+    port: 8084
     protocol: TCP
     targetPort: 8084
   type: ClusterIP
@@ -33,7 +34,8 @@ spec:
     app.kubernetes.io/name: gate
     spinnaker.io/fleet-instance: inst-2
   ports:
-  - port: 8084
+  - name: https
+    port: 8084
     protocol: TCP
     targetPort: 8084
   type: ClusterIP

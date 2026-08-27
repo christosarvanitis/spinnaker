@@ -21,7 +21,7 @@ metadata:
 spec:
   rules:
   # The global URL: what every ordinary user sees.
-  - host: spin.managed.armory.io
+  - host: spinnaker.managed.armory.io
     http: &edge
       paths:
         # NOTE the "/*" -- it is load-bearing. With pathType: ImplementationSpecific the AWS
@@ -53,7 +53,7 @@ spec:
   # ACS the IdP posts the assertion to the instance host through the user's browser. That is
   # exactly why the admin-only rule is enforced inside Gate rather than by a NetworkPolicy
   # here -- it cannot be a firewall rule.
-  - host: inst-1.spin.managed.armory.io
+  - host: inst-1-spinnaker.managed.armory.io
     http: *edge
-  - host: inst-2.spin.managed.armory.io
+  - host: inst-2-spinnaker.managed.armory.io
     http: *edge

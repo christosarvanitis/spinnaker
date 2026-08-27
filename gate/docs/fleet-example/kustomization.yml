@@ -17,7 +17,7 @@ namespace: spinnaker
 
 resources:
 - edge-deployment.yml
-- instance-services.yml
+#- instance-services.yml
 - ingress.yml
 # The fleet manager's own reusable base. It ships with placeholder config, overridden below.
 - ../../../fleet-manager/k8s
@@ -42,7 +42,10 @@ configMapGenerator:
   literals:
   - FLEET_INSTANCES=inst-1=Instance One,inst-2=Instance Two
   - FLEET_DEFAULT_INSTANCE=inst-1
-  - FLEET_COOKIE_DOMAIN=.spin.managed.armory.io
+  # Nearest parent covering the global host (spinnaker.managed.armory.io) AND both instance
+  # hosts (inst-N-spinnaker.managed.armory.io). Also matches the domain Gate scopes its
+  # session cookie to, so both cookies have identical visibility.
+  - FLEET_COOKIE_DOMAIN=.managed.armory.io
   - FLEET_COOKIE_SECURE=true
 
 # Every object here belongs to the fleet, but this is metadata only -- includeSelectors is

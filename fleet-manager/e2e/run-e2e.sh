@@ -70,6 +70,42 @@ sed -E \
   -e 's#server fleet-manager[^;]*;#server fleet-manager:8080;#' \
   "$EDGE_CONF_SRC" > "$GENERATED"
 
+# Rewrite the virtual hosts to this harness's own hostnames.
+#
+# This matters for durability: the edge config carries whatever real domain a deployment
+# uses, so hardcoding hostnames in this script would silently break the whole suite the next
+# time the fleet is pointed at a different domain -- every request would miss the virtual
+# hosts, land on the default_server, and come back 404.
+#
+# Done in Python rather than sed because the rules have to be mutually exclusive: `_` (the
+# default_server) must be left alone, and an instance host rewritten to a real-looking
+# hostname must not then be caught by the global-host rule.
+GLOBAL_HOST="$GLOBAL_HOST" INST1_HOST="$INST1_HOST" INST2_HOST="$INST2_HOST" \
+GENERATED="$GENERATED" python3 - <<'PY'
+import os, re
+
+path = os.environ['GENERATED']
+hosts = {'1': os.environ['INST1_HOST'], '2': os.environ['INST2_HOST']}
+
+def rewrite(match):
+    indent, host = match.group(1), match.group(2).strip()
+    if host == '_':                       # the default_server catch-all
+        return match.group(0)
+    for n, replacement in hosts.items():
+        if host.startswith(f'inst-{n}'):
+            return f'{indent}server_name {replacement};'
+    return f"{indent}server_name {os.environ['GLOBAL_HOST']};"
+
+text = open(path).read()
+text, n = re.subn(r'^([ \t]*)server_name ([^;]+);', rewrite, text, flags=re.M)
+open(path, 'w').write(text)
+
+# Four blocks: default_server, global, inst-1, inst-2. Fewer means the config changed shape
+# and this rewrite silently missed one.
+if n != 4:
+    raise SystemExit(f'expected 4 server_name directives, rewrote {n} -- check {path}')
+PY
+
 # Fail loudly if the substitution missed anything, rather than starting nginx against
 # unresolvable Kubernetes DNS names.
 if grep -q 'svc.cluster.local' "$GENERATED"; then
